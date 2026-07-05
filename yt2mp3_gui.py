@@ -420,32 +420,39 @@ class App(ctk.CTk):
 
     def _download_worker(self, urls: list[str]):
         total = len(urls)
-        ok_count = 0
-        skip_count = 0
+        ok_titles = []
+        skip_titles = []
+        err_count = 0
 
         for i, url in enumerate(urls):
             self._msg_queue.put(("log", f"\n[{i+1}/{total}] {url}", "dim"))
-            result = self._download_one(url, i, total)
+            result, title = self._download_one(url, i, total)
             if result == "ok":
-                ok_count += 1
+                ok_titles.append(title)
             elif result == "skip":
-                skip_count += 1
+                skip_titles.append(title)
+            else:
+                err_count += 1
             self._msg_queue.put(("progress", (i + 1) / total))
 
-        failed = total - ok_count - skip_count
-        parts = []
-        if ok_count:
-            parts.append(f"{ok_count} pobrano")
-        if skip_count:
-            parts.append(f"{skip_count} pominięto (już istnieje)")
-        if failed:
-            parts.append(f"{failed} błędów")
-        summary = "\n✔  Gotowe: " + ", ".join(parts) + "."
-        tag = "ok" if not failed else "err"
-        self._msg_queue.put(("log", summary, tag))
+        lines = ["\n─────────────────────────────────────"]
+        if ok_titles:
+            lines.append(f"✔  Pobrano ({len(ok_titles)}):")
+            for t in ok_titles:
+                lines.append(f"     • {t}")
+        if skip_titles:
+            lines.append(f"ℹ  Pominięto — już istnieje ({len(skip_titles)}):")
+            for t in skip_titles:
+                lines.append(f"     • {t}")
+        if err_count:
+            lines.append(f"✖  Błędy: {err_count}")
+        lines.append("─────────────────────────────────────")
+
+        tag = "ok" if not err_count else "err"
+        self._msg_queue.put(("log", "\n".join(lines), tag))
         self._msg_queue.put(("done", None))
 
-    def _download_one(self, url: str, idx: int, total: int) -> bool:
+    def _download_one(self, url: str, idx: int, total: int) -> tuple:
         output_dir = self._output_dir.get()
         os.makedirs(output_dir, exist_ok=True)
 
@@ -494,7 +501,7 @@ class App(ctk.CTk):
                 info = ydl.extract_info(url, download=False)
                 if info is None:
                     q.put(("log", "  ✖  Nie można pobrać informacji o wideo.", "err"))
-                    return False
+                    return ("err", url)
 
                 title = info.get("title", "unknown")
                 q.put(("log", f"  ♪  {title}", "info"))
@@ -503,7 +510,7 @@ class App(ctk.CTk):
                 if os.path.exists(out_path):
                     size_mb = os.path.getsize(out_path) / (1024 * 1024)
                     q.put(("log", f"  ℹ  Plik już istnieje, pomijam: {title}.mp3  ({size_mb:.1f} MB)", "dim"))
-                    return "skip"
+                    return ("skip", title)
 
                 ydl.download([url])
 
@@ -511,7 +518,7 @@ class App(ctk.CTk):
             size_mb = os.path.getsize(out_path) / (1024 * 1024) if os.path.exists(out_path) else 0
             q.put(("log", f"  ✔  Zapisano: {title}.mp3  ({size_mb:.1f} MB)", "ok"))
             q.put(("history_add", {"title": title, "url": url, "size_mb": size_mb, "path": out_path}))
-            return "ok"
+            return ("ok", title)
 
         except yt_dlp.utils.DownloadError as e:
             msg = str(e)
@@ -524,10 +531,10 @@ class App(ctk.CTk):
             else:
                 reason = msg.split("\n")[0][:120]
             q.put(("log", f"  ✖  Błąd: {reason}", "err"))
-            return "err"
+            return ("err", url)
         except Exception as e:
             q.put(("log", f"  ✖  Nieoczekiwany błąd: {e}", "err"))
-            return "err"
+            return ("err", url)
 
     # ── Queue polling ─────────────────────────────────────────────────────────
 
