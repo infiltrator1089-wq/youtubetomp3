@@ -1,6 +1,7 @@
 # Build & dist
 build/
-dist/
+dist/*
+!dist/yt2mp3.exe
 *.spec
 
 # Python
