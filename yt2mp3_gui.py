@@ -421,16 +421,27 @@ class App(ctk.CTk):
     def _download_worker(self, urls: list[str]):
         total = len(urls)
         ok_count = 0
+        skip_count = 0
 
         for i, url in enumerate(urls):
             self._msg_queue.put(("log", f"\n[{i+1}/{total}] {url}", "dim"))
-            success = self._download_one(url, i, total)
-            if success:
+            result = self._download_one(url, i, total)
+            if result == "ok":
                 ok_count += 1
+            elif result == "skip":
+                skip_count += 1
             self._msg_queue.put(("progress", (i + 1) / total))
 
-        summary = f"\n✔  Gotowe: {ok_count}/{total} pobrano pomyślnie."
-        tag = "ok" if ok_count == total else "err"
+        failed = total - ok_count - skip_count
+        parts = []
+        if ok_count:
+            parts.append(f"{ok_count} pobrano")
+        if skip_count:
+            parts.append(f"{skip_count} pominięto (już istnieje)")
+        if failed:
+            parts.append(f"{failed} błędów")
+        summary = "\n✔  Gotowe: " + ", ".join(parts) + "."
+        tag = "ok" if not failed else "err"
         self._msg_queue.put(("log", summary, tag))
         self._msg_queue.put(("done", None))
 
@@ -492,7 +503,7 @@ class App(ctk.CTk):
                 if os.path.exists(out_path):
                     size_mb = os.path.getsize(out_path) / (1024 * 1024)
                     q.put(("log", f"  ℹ  Plik już istnieje, pomijam: {title}.mp3  ({size_mb:.1f} MB)", "dim"))
-                    return True
+                    return "skip"
 
                 ydl.download([url])
 
@@ -500,7 +511,7 @@ class App(ctk.CTk):
             size_mb = os.path.getsize(out_path) / (1024 * 1024) if os.path.exists(out_path) else 0
             q.put(("log", f"  ✔  Zapisano: {title}.mp3  ({size_mb:.1f} MB)", "ok"))
             q.put(("history_add", {"title": title, "url": url, "size_mb": size_mb, "path": out_path}))
-            return True
+            return "ok"
 
         except yt_dlp.utils.DownloadError as e:
             msg = str(e)
@@ -513,10 +524,10 @@ class App(ctk.CTk):
             else:
                 reason = msg.split("\n")[0][:120]
             q.put(("log", f"  ✖  Błąd: {reason}", "err"))
-            return False
+            return "err"
         except Exception as e:
             q.put(("log", f"  ✖  Nieoczekiwany błąd: {e}", "err"))
-            return False
+            return "err"
 
     # ── Queue polling ─────────────────────────────────────────────────────────
 
