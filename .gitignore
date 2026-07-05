@@ -1,0 +1,18 @@
+# Build & dist
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# App data
+output/
+history.json
+
+# IDE / tools
+.claude/
+.venv/
+venv/
