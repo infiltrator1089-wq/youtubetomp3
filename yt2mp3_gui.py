@@ -226,9 +226,36 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(
             time_frame,
-            text="(format: 1:30 lub 1:30:00)",
+            text="(1:30 lub 1:30:00)",
             font=ctk.CTkFont(size=11),
             text_color="gray50",
+        ).pack(side="left", padx=(0, 16))
+
+        # Fade checkbox + duration
+        self.fade_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            time_frame,
+            text="Fade",
+            variable=self.fade_var,
+            width=60,
+            font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 6))
+
+        self.fade_dur = ctk.CTkEntry(
+            time_frame,
+            width=44,
+            height=30,
+            placeholder_text="3s",
+            font=ctk.CTkFont(family="Consolas", size=12),
+        )
+        self.fade_dur.pack(side="left", padx=(0, 4))
+        self.fade_dur.insert(0, "3")
+
+        ctk.CTkLabel(
+            time_frame,
+            text="s",
+            font=ctk.CTkFont(size=13),
+            text_color="gray60",
         ).pack(side="left")
 
         # Folder picker row
@@ -467,20 +494,29 @@ class App(ctk.CTk):
             self._log("⚠  Nieprawidłowy format czasu. Użyj np. 1:30 lub 1:30:00", "err")
             return
 
+        fade_on = self.fade_var.get()
+        try:
+            fade_sec = max(0.1, float(self.fade_dur.get().strip() or "3"))
+        except ValueError:
+            self._log("⚠  Nieprawidłowy czas fade. Podaj liczbę sekund, np. 3", "err")
+            return
+
         self._set_buttons(False)
         self.progress_bar.set(0)
         self._log(f"▶  Kolejka: {len(urls)} {'link' if len(urls)==1 else 'linków'}", "info")
         if t_start or t_end:
             self._log(f"   Przedział: {t_start or '(początek)'} → {t_end or '(koniec)'}", "dim")
+        if fade_on:
+            self._log(f"   Fade in/out: {fade_sec:.0f}s", "dim")
 
         self._download_thread = threading.Thread(
             target=self._download_worker,
-            args=(urls, t_start, t_end),
+            args=(urls, t_start, t_end, fade_on, fade_sec),
             daemon=True,
         )
         self._download_thread.start()
 
-    def _download_worker(self, urls: list[str], t_start: str, t_end: str):
+    def _download_worker(self, urls: list[str], t_start: str, t_end: str, fade_on: bool, fade_sec: float):
         total = len(urls)
         ok_titles = []
         skip_titles = []
@@ -488,7 +524,7 @@ class App(ctk.CTk):
 
         for i, url in enumerate(urls):
             self._msg_queue.put(("log", f"\n[{i+1}/{total}] {url}", "dim"))
-            result, title = self._download_one(url, i, total, t_start, t_end)
+            result, title = self._download_one(url, i, total, t_start, t_end, fade_on, fade_sec)
             if result == "ok":
                 ok_titles.append(title)
             elif result == "skip":
@@ -514,6 +550,16 @@ class App(ctk.CTk):
         self._msg_queue.put(("log", "\n".join(lines), tag))
         self._msg_queue.put(("done", None))
 
+    def _make_fade_opts(self, t_start: str, t_end: str, fade_sec: float) -> dict:
+        filters = [f"afade=t=in:st=0:d={fade_sec}"]
+        if t_end:
+            start_sec = self._to_seconds(t_start) if t_start else 0
+            end_sec   = self._to_seconds(t_end)
+            clip_dur  = end_sec - start_sec
+            fade_out_st = max(0.0, clip_dur - fade_sec)
+            filters.append(f"afade=t=out:st={fade_out_st:.2f}:d={fade_sec}")
+        return {"postprocessor_args": {"FFmpegExtractAudio": ["-af", ",".join(filters)]}}
+
     def _make_range_opts(self, t_start: str, t_end: str) -> dict:
         start_sec = self._to_seconds(t_start) if t_start else 0
         end_sec   = self._to_seconds(t_end)   if t_end   else float("inf")
@@ -523,7 +569,7 @@ class App(ctk.CTk):
 
         return {"download_ranges": _range_func, "force_keyframes_at_cuts": True}
 
-    def _download_one(self, url: str, idx: int, total: int, t_start: str, t_end: str) -> tuple:
+    def _download_one(self, url: str, idx: int, total: int, t_start: str, t_end: str, fade_on: bool, fade_sec: float) -> tuple:
         output_dir = self._output_dir.get()
         os.makedirs(output_dir, exist_ok=True)
 
@@ -573,6 +619,7 @@ class App(ctk.CTk):
             "js_runtimes": {"node": {}},
             **({"ffmpeg_location": ffmpeg_dir} if ffmpeg_dir else {}),
             **(self._make_range_opts(t_start, t_end) if (t_start or t_end) else {}),
+            **(self._make_fade_opts(t_start, t_end, fade_sec) if fade_on else {}),
         }
 
         try:
