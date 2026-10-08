@@ -532,10 +532,17 @@ class App(ctk.CTk):
             elif d["status"] == "finished":
                 q.put(("progress_line", "  Konwersja do MP3..."))
 
+        # Build range suffix from times (known before title)
+        range_suffix = ""
+        if t_start or t_end:
+            s = t_start.replace(":", ".") if t_start else "0.00"
+            e = t_end.replace(":", ".") if t_end else "end"
+            range_suffix = f" [{s}-{e}]"
+
         ffmpeg_dir = _ffmpeg_location()
         ydl_opts = {
             "format": "bestaudio/best",
-            "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
+            "outtmpl": os.path.join(output_dir, f"%(title)s{range_suffix}.%(ext)s"),
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
@@ -550,6 +557,8 @@ class App(ctk.CTk):
             "noplaylist": True,
             "js_runtimes": {"node": {}},
             **({"ffmpeg_location": ffmpeg_dir} if ffmpeg_dir else {}),
+            **({"download_sections": [f"*{t_start or '0'}-{t_end or 'inf'}"],
+                "force_keyframes_at_cuts": True} if (t_start or t_end) else {}),
         }
 
         try:
@@ -562,25 +571,11 @@ class App(ctk.CTk):
                 title = info.get("title", "unknown")
                 q.put(("log", f"  ♪  {title}", "info"))
 
-                # Build filename suffix for time range
-                range_suffix = ""
-                if t_start or t_end:
-                    s = t_start.replace(":", ".") if t_start else "0.00"
-                    e = t_end.replace(":", ".") if t_end else "end"
-                    range_suffix = f" [{s}-{e}]"
-
                 out_path = os.path.join(output_dir, f"{title}{range_suffix}.mp3")
                 if os.path.exists(out_path):
                     size_mb = os.path.getsize(out_path) / (1024 * 1024)
                     q.put(("log", f"  ℹ  Plik już istnieje, pomijam: {title}{range_suffix}.mp3  ({size_mb:.1f} MB)", "dim"))
                     return ("skip", title)
-
-                # Add time range options if specified
-                if t_start or t_end:
-                    section = f"*{t_start or '0'}-{t_end or 'inf'}"
-                    ydl.params["download_sections"] = [section]
-                    ydl.params["force_keyframes_at_cuts"] = True
-                    ydl.params["outtmpl"] = os.path.join(output_dir, f"%(title)s{range_suffix}.%(ext)s")
 
                 ydl.download([url])
 
