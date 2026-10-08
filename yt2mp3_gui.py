@@ -433,7 +433,6 @@ class App(ctk.CTk):
 
     @staticmethod
     def _parse_time(val: str) -> str:
-        """Validate and normalise a time string; return '' if empty/invalid."""
         val = val.strip()
         if not val:
             return ""
@@ -441,6 +440,13 @@ class App(ctk.CTk):
         if re.fullmatch(r"\d+:\d{2}(:\d{2})?", val):
             return val
         return None  # invalid
+
+    @staticmethod
+    def _to_seconds(t: str) -> float:
+        parts = t.split(":")
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        return int(parts[0]) * 60 + float(parts[1])
 
     def _start_download(self):
         raw = self.url_box.get("1.0", "end").strip()
@@ -508,6 +514,15 @@ class App(ctk.CTk):
         self._msg_queue.put(("log", "\n".join(lines), tag))
         self._msg_queue.put(("done", None))
 
+    def _make_range_opts(self, t_start: str, t_end: str) -> dict:
+        start_sec = self._to_seconds(t_start) if t_start else 0
+        end_sec   = self._to_seconds(t_end)   if t_end   else float("inf")
+
+        def _range_func(info_dict, ydl_instance):
+            yield {"start_time": start_sec, "end_time": end_sec}
+
+        return {"download_ranges": _range_func, "force_keyframes_at_cuts": True}
+
     def _download_one(self, url: str, idx: int, total: int, t_start: str, t_end: str) -> tuple:
         output_dir = self._output_dir.get()
         os.makedirs(output_dir, exist_ok=True)
@@ -557,8 +572,7 @@ class App(ctk.CTk):
             "noplaylist": True,
             "js_runtimes": {"node": {}},
             **({"ffmpeg_location": ffmpeg_dir} if ffmpeg_dir else {}),
-            **({"download_sections": [f"*{t_start or '0'}-{t_end or 'inf'}"],
-                "force_keyframes_at_cuts": True} if (t_start or t_end) else {}),
+            **(self._make_range_opts(t_start, t_end) if (t_start or t_end) else {}),
         }
 
         try:
