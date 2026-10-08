@@ -550,15 +550,30 @@ class App(ctk.CTk):
         self._msg_queue.put(("log", "\n".join(lines), tag))
         self._msg_queue.put(("done", None))
 
-    def _make_fade_opts(self, t_start: str, t_end: str, fade_sec: float) -> dict:
+    def _apply_fade(self, mp3_path: str, t_start: str, t_end: str, fade_sec: float, q) -> bool:
+        import subprocess
+        ffmpeg_dir = _ffmpeg_location()
+        ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
+
         filters = [f"afade=t=in:st=0:d={fade_sec}"]
         if t_end:
-            start_sec = self._to_seconds(t_start) if t_start else 0
-            end_sec   = self._to_seconds(t_end)
-            clip_dur  = end_sec - start_sec
+            start_sec   = self._to_seconds(t_start) if t_start else 0
+            clip_dur    = self._to_seconds(t_end) - start_sec
             fade_out_st = max(0.0, clip_dur - fade_sec)
             filters.append(f"afade=t=out:st={fade_out_st:.2f}:d={fade_sec}")
-        return {"postprocessor_args": {"FFmpegExtractAudio": ["-af", ",".join(filters)]}}
+
+        tmp = mp3_path + "._fade.mp3"
+        result = subprocess.run(
+            [ffmpeg_bin, "-i", mp3_path, "-af", ",".join(filters), "-y", tmp],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            os.replace(tmp, mp3_path)
+            return True
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        q.put(("log", f"  ⚠  Fade nie zastosowany (ffmpeg error)", "err"))
+        return False
 
     def _make_range_opts(self, t_start: str, t_end: str) -> dict:
         start_sec = self._to_seconds(t_start) if t_start else 0
@@ -619,7 +634,6 @@ class App(ctk.CTk):
             "js_runtimes": {"node": {}},
             **({"ffmpeg_location": ffmpeg_dir} if ffmpeg_dir else {}),
             **(self._make_range_opts(t_start, t_end) if (t_start or t_end) else {}),
-            **(self._make_fade_opts(t_start, t_end, fade_sec) if fade_on else {}),
         }
 
         try:
@@ -641,6 +655,10 @@ class App(ctk.CTk):
                 ydl.download([url])
 
             out_path = os.path.join(output_dir, f"{title}{range_suffix}.mp3")
+            if fade_on and os.path.exists(out_path):
+                q.put(("progress_line", "  Aplikowanie fade..."))
+                self._apply_fade(out_path, t_start, t_end, fade_sec, q)
+
             size_mb = os.path.getsize(out_path) / (1024 * 1024) if os.path.exists(out_path) else 0
             display_name = f"{title}{range_suffix}.mp3"
             q.put(("log", f"  ✔  Zapisano: {display_name}  ({size_mb:.1f} MB)", "ok"))
