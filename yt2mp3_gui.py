@@ -175,7 +175,7 @@ class App(ctk.CTk):
     def _build_download_tab(self, parent):
         parent.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(1, weight=2)
-        parent.grid_rowconfigure(5, weight=1)
+        parent.grid_rowconfigure(7, weight=1)
 
         ctk.CTkLabel(
             parent,
@@ -194,9 +194,46 @@ class App(ctk.CTk):
         self.url_box.insert("1.0", "https://www.youtube.com/watch?v=...\n")
         self.url_box.bind("<FocusIn>", self._clear_placeholder)
 
+        # Time range row
+        time_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        time_frame.grid(row=2, column=0, pady=(8, 0), sticky="ew")
+
+        ctk.CTkLabel(
+            time_frame,
+            text="Przedział czasowy (opcja):",
+            font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(time_frame, text="Od:", font=ctk.CTkFont(size=13)).pack(side="left")
+        self.time_start = ctk.CTkEntry(
+            time_frame,
+            width=80,
+            height=30,
+            placeholder_text="np. 1:30",
+            font=ctk.CTkFont(family="Consolas", size=12),
+        )
+        self.time_start.pack(side="left", padx=(4, 12))
+
+        ctk.CTkLabel(time_frame, text="Do:", font=ctk.CTkFont(size=13)).pack(side="left")
+        self.time_end = ctk.CTkEntry(
+            time_frame,
+            width=80,
+            height=30,
+            placeholder_text="np. 3:45",
+            font=ctk.CTkFont(family="Consolas", size=12),
+        )
+        self.time_end.pack(side="left", padx=(4, 12))
+
+        ctk.CTkLabel(
+            time_frame,
+            text="(format: 1:30 lub 1:30:00)",
+            font=ctk.CTkFont(size=11),
+            text_color="gray50",
+        ).pack(side="left")
+
         # Folder picker row
         folder_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        folder_frame.grid(row=2, column=0, pady=(10, 0), sticky="ew")
+        folder_frame.grid(row=3, column=0, pady=(10, 0), sticky="ew")
         folder_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
@@ -225,7 +262,7 @@ class App(ctk.CTk):
 
         # Buttons
         btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        btn_frame.grid(row=3, column=0, pady=10, sticky="ew")
+        btn_frame.grid(row=4, column=0, pady=10, sticky="ew")
         btn_frame.grid_columnconfigure(1, weight=1)
 
         self.download_btn = ctk.CTkButton(
@@ -259,13 +296,13 @@ class App(ctk.CTk):
 
         # Progress bar
         self.progress_bar = ctk.CTkProgressBar(parent, height=6)
-        self.progress_bar.grid(row=4, column=0, pady=(0, 6), sticky="ew")
+        self.progress_bar.grid(row=5, column=0, pady=(0, 6), sticky="ew")
         self.progress_bar.set(0)
 
         # Log
         ctk.CTkLabel(
             parent, text="Log", font=ctk.CTkFont(size=12), text_color="gray60"
-        ).grid(row=5, column=0, pady=(0, 2), sticky="w")  # label before log
+        ).grid(row=6, column=0, pady=(0, 2), sticky="w")
 
         self.log_box = ctk.CTkTextbox(
             parent,
@@ -273,8 +310,8 @@ class App(ctk.CTk):
             state="disabled",
             wrap="none",
         )
-        self.log_box.grid(row=6, column=0, sticky="nsew")
-        parent.grid_rowconfigure(6, weight=1)
+        self.log_box.grid(row=7, column=0, sticky="nsew")
+        parent.grid_rowconfigure(7, weight=1)
 
         self.log_box._textbox.tag_configure("ok",   foreground="#4ade80")
         self.log_box._textbox.tag_configure("err",  foreground="#f87171")
@@ -394,6 +431,17 @@ class App(ctk.CTk):
 
     # ── Download logic ────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _parse_time(val: str) -> str:
+        """Validate and normalise a time string; return '' if empty/invalid."""
+        val = val.strip()
+        if not val:
+            return ""
+        import re
+        if re.fullmatch(r"\d+:\d{2}(:\d{2})?", val):
+            return val
+        return None  # invalid
+
     def _start_download(self):
         raw = self.url_box.get("1.0", "end").strip()
         urls = [
@@ -407,18 +455,26 @@ class App(ctk.CTk):
             self._log("⚠  Brak linków do pobrania.", "err")
             return
 
+        t_start = self._parse_time(self.time_start.get())
+        t_end   = self._parse_time(self.time_end.get())
+        if t_start is None or t_end is None:
+            self._log("⚠  Nieprawidłowy format czasu. Użyj np. 1:30 lub 1:30:00", "err")
+            return
+
         self._set_buttons(False)
         self.progress_bar.set(0)
         self._log(f"▶  Kolejka: {len(urls)} {'link' if len(urls)==1 else 'linków'}", "info")
+        if t_start or t_end:
+            self._log(f"   Przedział: {t_start or '(początek)'} → {t_end or '(koniec)'}", "dim")
 
         self._download_thread = threading.Thread(
             target=self._download_worker,
-            args=(urls,),
+            args=(urls, t_start, t_end),
             daemon=True,
         )
         self._download_thread.start()
 
-    def _download_worker(self, urls: list[str]):
+    def _download_worker(self, urls: list[str], t_start: str, t_end: str):
         total = len(urls)
         ok_titles = []
         skip_titles = []
@@ -426,7 +482,7 @@ class App(ctk.CTk):
 
         for i, url in enumerate(urls):
             self._msg_queue.put(("log", f"\n[{i+1}/{total}] {url}", "dim"))
-            result, title = self._download_one(url, i, total)
+            result, title = self._download_one(url, i, total, t_start, t_end)
             if result == "ok":
                 ok_titles.append(title)
             elif result == "skip":
@@ -452,7 +508,7 @@ class App(ctk.CTk):
         self._msg_queue.put(("log", "\n".join(lines), tag))
         self._msg_queue.put(("done", None))
 
-    def _download_one(self, url: str, idx: int, total: int) -> tuple:
+    def _download_one(self, url: str, idx: int, total: int, t_start: str, t_end: str) -> tuple:
         output_dir = self._output_dir.get()
         os.makedirs(output_dir, exist_ok=True)
 
@@ -506,19 +562,34 @@ class App(ctk.CTk):
                 title = info.get("title", "unknown")
                 q.put(("log", f"  ♪  {title}", "info"))
 
-                out_path = os.path.join(output_dir, f"{title}.mp3")
+                # Build filename suffix for time range
+                range_suffix = ""
+                if t_start or t_end:
+                    s = t_start.replace(":", ".") if t_start else "0.00"
+                    e = t_end.replace(":", ".") if t_end else "end"
+                    range_suffix = f" [{s}-{e}]"
+
+                out_path = os.path.join(output_dir, f"{title}{range_suffix}.mp3")
                 if os.path.exists(out_path):
                     size_mb = os.path.getsize(out_path) / (1024 * 1024)
-                    q.put(("log", f"  ℹ  Plik już istnieje, pomijam: {title}.mp3  ({size_mb:.1f} MB)", "dim"))
+                    q.put(("log", f"  ℹ  Plik już istnieje, pomijam: {title}{range_suffix}.mp3  ({size_mb:.1f} MB)", "dim"))
                     return ("skip", title)
+
+                # Add time range options if specified
+                if t_start or t_end:
+                    section = f"*{t_start or '0'}-{t_end or 'inf'}"
+                    ydl.params["download_sections"] = [section]
+                    ydl.params["force_keyframes_at_cuts"] = True
+                    ydl.params["outtmpl"] = os.path.join(output_dir, f"%(title)s{range_suffix}.%(ext)s")
 
                 ydl.download([url])
 
-            out_path = os.path.join(output_dir, f"{title}.mp3")
+            out_path = os.path.join(output_dir, f"{title}{range_suffix}.mp3")
             size_mb = os.path.getsize(out_path) / (1024 * 1024) if os.path.exists(out_path) else 0
-            q.put(("log", f"  ✔  Zapisano: {title}.mp3  ({size_mb:.1f} MB)", "ok"))
-            q.put(("history_add", {"title": title, "url": url, "size_mb": size_mb, "path": out_path}))
-            return ("ok", title)
+            display_name = f"{title}{range_suffix}.mp3"
+            q.put(("log", f"  ✔  Zapisano: {display_name}  ({size_mb:.1f} MB)", "ok"))
+            q.put(("history_add", {"title": f"{title}{range_suffix}", "url": url, "size_mb": size_mb, "path": out_path}))
+            return ("ok", f"{title}{range_suffix}")
 
         except yt_dlp.utils.DownloadError as e:
             msg = str(e)
