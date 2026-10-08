@@ -646,21 +646,23 @@ class App(ctk.CTk):
                 title = info.get("title", "unknown")
                 q.put(("log", f"  ♪  {title}", "info"))
 
-                out_path = os.path.join(output_dir, f"{title}{range_suffix}.mp3")
+                # Use yt-dlp's own filename logic to get the real sanitized path
+                raw_path = ydl.prepare_filename(info)
+                out_path = os.path.splitext(raw_path)[0] + ".mp3"
+
                 if os.path.exists(out_path):
                     size_mb = os.path.getsize(out_path) / (1024 * 1024)
-                    q.put(("log", f"  ℹ  Plik już istnieje, pomijam: {title}{range_suffix}.mp3  ({size_mb:.1f} MB)", "dim"))
+                    q.put(("log", f"  ℹ  Plik już istnieje, pomijam: {os.path.basename(out_path)}  ({size_mb:.1f} MB)", "dim"))
                     return ("skip", title)
 
                 ydl.download([url])
 
-            out_path = os.path.join(output_dir, f"{title}{range_suffix}.mp3")
             if fade_on and os.path.exists(out_path):
                 q.put(("progress_line", "  Aplikowanie fade..."))
                 self._apply_fade(out_path, t_start, t_end, fade_sec, q)
 
             size_mb = os.path.getsize(out_path) / (1024 * 1024) if os.path.exists(out_path) else 0
-            display_name = f"{title}{range_suffix}.mp3"
+            display_name = os.path.basename(out_path)
             q.put(("log", f"  ✔  Zapisano: {display_name}  ({size_mb:.1f} MB)", "ok"))
             q.put(("history_add", {"title": f"{title}{range_suffix}", "url": url, "size_mb": size_mb, "path": out_path}))
             return ("ok", f"{title}{range_suffix}")
